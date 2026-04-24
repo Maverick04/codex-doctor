@@ -593,7 +593,7 @@ function printCompact(diagnosis) {
   console.log(`activity: ${formatActivity(diagnosis.activity, color)}`);
   console.log(`context: delta +${formatTokens(diagnosis.context.growth_tokens)} / ${diagnosis.context.window_minutes}m, attributed ${formatTokens(diagnosis.context.attributed_tokens || 0)}${topContext ? `, top ${topContext.source} ${formatPercent(topContext.share * 100)}` : ""}`);
   console.log(`repeat: ${topRepeat ? `${topRepeat.work} x${topRepeat.count}, ${formatDuration(topRepeat.duration_ms)}, ~${formatTokens(topRepeat.estimated_tokens)} tokens` : "none"}`);
-  console.log(`slowest: ${slow ? `${slow.label}, ${formatDuration(slow.duration_ms)}, ${slow.exit_code === 0 ? "ok" : `failed(${slow.exit_code})`}` : "none"}`);
+  console.log(`slowest: ${slow ? `${slow.label}, ${formatDuration(slow.duration_ms)}, ${toolStatusText(slow)}` : "none"}`);
   console.log(`advice: ${diagnosis.advice[0]}`);
 }
 
@@ -656,7 +656,7 @@ function buildSignals(diagnosis) {
     {
       name: "tools",
       level: failedTools >= 3 ? "warning" : failedTools > 0 || (slowest && slowest.duration_ms > 120000) ? "watch" : "healthy",
-      detail: slowest ? `${slowest.label} · ${formatDuration(slowest.duration_ms)} · ${slowest.exit_code === 0 ? "ok" : `failed(${slowest.exit_code})`}` : "none",
+      detail: slowest ? `${slowest.label} · ${formatDuration(slowest.duration_ms)} · ${toolStatusText(slowest)}` : "none",
     },
   ];
 }
@@ -701,7 +701,17 @@ function formatToolStatus(item, color) {
   if (item.exit_code === 0) {
     return colorSeverity("healthy", "ok", color);
   }
-  return colorSeverity("critical", `failed(${item.exit_code})`, color);
+  return colorSeverity("critical", toolStatusText(item), color);
+}
+
+function toolStatusText(item) {
+  if (item.exit_code === 0) {
+    return "ok";
+  }
+  if (item.exit_code === null || item.exit_code < 0) {
+    return "tool failed";
+  }
+  return `failed(${item.exit_code})`;
 }
 
 function severityForContext(percent) {
@@ -817,6 +827,7 @@ function normalizeExecEnd(entry) {
     command: cmd,
     parsed_cmd: parsed,
     exit_code: typeof payload.exit_code === "number" ? payload.exit_code : null,
+    status: payload.status || "",
     duration_ms: durationToMs(payload.duration),
     output_len: (payload.aggregated_output || "").length,
     is_doctor: isDoctorCommand(cmd),

@@ -322,6 +322,26 @@ test("source self-check and version output identify the package without local pa
   assert.doesNotMatch(source.stdout, /\/Users|codex-doctor-test-/);
 });
 
+test("negative tool exit codes render as tool failures instead of shell exit codes", () => {
+  const fixture = createFixture({
+    id: "98989898-9898-4989-8989-989898989898",
+    tokensUsed: 180000,
+    entries: [
+      sessionMeta("98989898-9898-4989-8989-989898989898", "2026-04-24T14:30:00.000Z"),
+      tokenCount("2026-04-24T14:30:00.000Z", 24000, 180000),
+      execEnd("2026-04-24T14:31:00.000Z", "a", "brew install --cask example/app", [{ type: "unknown" }], "Auto-updating Homebrew", -1, 217, "failed"),
+    ],
+  });
+
+  const full = runDoctor(fixture, ["dg"]).stdout;
+  const compact = runDoctor(fixture, ["dg", "-c"]).stdout;
+
+  assert.match(full, /tool failed/);
+  assert.match(compact, /tool failed/);
+  assert.doesNotMatch(full, /failed\(-1\)/);
+  assert.doesNotMatch(compact, /failed\(-1\)/);
+});
+
 test("default target falls back to newest non-doctor session when cwd has no match", () => {
   const latestId = "91919191-9191-4919-8919-919191919191";
   const olderId = "92929292-9292-4929-8929-929292929292";
@@ -544,7 +564,7 @@ function tokenCount(timestamp, inputTokens, totalTokens) {
   };
 }
 
-function execEnd(timestamp, callId, command, parsedCmd, output, exitCode, seconds) {
+function execEnd(timestamp, callId, command, parsedCmd, output, exitCode, seconds, status = "completed") {
   return {
     type: "event_msg",
     timestamp,
@@ -556,6 +576,7 @@ function execEnd(timestamp, callId, command, parsedCmd, output, exitCode, second
       exit_code: exitCode,
       duration: { secs: seconds, nanos: 0 },
       aggregated_output: output,
+      status,
     },
   };
 }
