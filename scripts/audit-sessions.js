@@ -79,7 +79,7 @@ function inspectOutput(thread, doctor, output) {
   if (!output.includes("Codex Doctor")) {
     issues.push("missing_header");
   }
-  if (/codex-doctor(?:\/[^/\s]+)?\/scripts\/codex-doctor\.js/.test(output)) {
+  if (/(?:^|\s)(?:node\s+)?(?:\.\/)?scripts\/codex-doctor\.js(?:\s+dg)?(?:\s|$)|codex-doctor(?:\/[^/\s]+)?\/scripts\/codex-doctor\.js/.test(output)) {
     issues.push("self_activity_leak");
   }
   if (/runtime (?:[1-9]\d{2,}h|unknown)/.test(output)) {

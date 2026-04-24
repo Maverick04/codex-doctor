@@ -100,9 +100,10 @@ function loadThreads() {
   }
 
   const query = [
-    "select id, rollout_path, created_at, updated_at, cwd, title,",
+    "select id, rollout_path, created_at, updated_at, cwd,",
+    "replace(replace(replace(coalesce(title,''), char(9), ' '), char(10), '\\n'), char(13), '\\r'),",
     "coalesce(model,''), coalesce(reasoning_effort,''), tokens_used,",
-    "coalesce(first_user_message,'')",
+    "replace(replace(replace(coalesce(first_user_message,''), char(9), ' '), char(10), '\\n'), char(13), '\\r')",
     "from threads where archived=0 order by updated_at desc limit 100;"
   ].join(" ");
   const result = childProcess.spawnSync("sqlite3", ["-readonly", "-separator", "\t", STATE_DB, query], {
@@ -1194,7 +1195,10 @@ function isDoctorThread(thread) {
 }
 
 function isDoctorCommand(command) {
-  return /codex-doctor(?:\/[^/\s]+)?\/scripts\/codex-doctor\.js|codex-doctor dg/.test(String(command || ""));
+  const text = normalizeCommand(command);
+  return /(?:^|\s)(?:node\s+)?(?:\.\/)?scripts\/codex-doctor\.js(?:\s+dg)?(?:\s|$)/.test(text)
+    || /codex-doctor(?:\/[^/\s]+)?\/scripts\/codex-doctor\.js/.test(text)
+    || /(?:^|\s)codex-doctor\s+dg(?:\s|$)/.test(text);
 }
 
 function escapeSql(value) {

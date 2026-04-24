@@ -136,9 +136,13 @@ npm test
 
 The test suite builds temporary Codex homes and validates:
 
-- Full output keeps the core diagnostic sections.
-- Missing context token samples do not render as `ctx 0%`.
-- Structured message payloads do not produce `NaN` output.
+- Full output sections, bordered tables, sort markers, share bars, severity badges, and slow-tool ordering.
+- Context token edge cases, including missing positive samples and final zero samples.
+- Structured message payloads, multiline thread metadata, and output hygiene checks.
+- Default session selection, including doctor side-thread parent recovery.
+- Pending and completed tool activity detection.
+- Audit-script clean and issue-detection paths.
+- Forced ANSI color mode for health levels.
 
 You can also audit local sessions:
 
