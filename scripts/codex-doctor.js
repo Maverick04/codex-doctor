@@ -200,6 +200,7 @@ function parseSession(entries, target) {
     functionOutputs: new Set(),
     webEvents: [],
     messages: [],
+    compactEvents: [],
     latestTimestamp: null,
   };
 
@@ -255,6 +256,8 @@ function parseSession(entries, target) {
         role: payloadType === "user_message" ? "user" : "assistant",
         text: get(entry, "payload.message") || get(entry, "payload.last_agent_message") || "",
       });
+    } else if (payloadType === "context_compacted") {
+      result.compactEvents.push({ timestamp: entry.timestamp });
     }
   }
 
@@ -322,7 +325,12 @@ function buildContextAttribution(parsed) {
   }
 
   const endMs = timestampMs(last.timestamp);
-  const startMs = endMs - WINDOW_MINUTES * 60 * 1000;
+  const windowStartMs = endMs - WINDOW_MINUTES * 60 * 1000;
+  const lastCompactMs = Math.max(0, ...parsed.compactEvents
+    .map((event) => timestampMs(event.timestamp))
+    .filter((time) => time && time <= endMs));
+  const startMs = Math.max(windowStartMs, lastCompactMs || 0);
+  const compacted = Boolean(lastCompactMs && lastCompactMs >= windowStartMs);
   const baseline = samples.find((sample) => timestampMs(sample.timestamp) >= startMs) || samples[Math.max(0, samples.length - 2)] || last;
   const growth = Math.max(0, last.input_tokens - baseline.input_tokens);
   const buckets = new Map();
@@ -368,7 +376,7 @@ function buildContextAttribution(parsed) {
     .sort((a, b) => b.tokens - a.tokens)
     .slice(0, MAX_ROWS);
 
-  return { growth_tokens: growth, attributed_tokens: adjustedTotal, window_minutes: WINDOW_MINUTES, sources };
+  return { growth_tokens: growth, attributed_tokens: adjustedTotal, window_minutes: WINDOW_MINUTES, compacted, sources };
 }
 
 function buildRepeatedWork(parsed) {
@@ -521,7 +529,8 @@ function printFull(diagnosis) {
   console.log("");
 
   console.log(color.bold("Context Growth"));
-  console.log(color.dim(`last ${diagnosis.context.window_minutes}m · observed delta +${formatTokens(diagnosis.context.growth_tokens)} tokens · attributed input ${formatTokens(diagnosis.context.attributed_tokens || 0)} tokens`));
+  const compactText = diagnosis.context.compacted ? " · after compact" : "";
+  console.log(color.dim(`last ${diagnosis.context.window_minutes}m${compactText} · observed delta +${formatTokens(diagnosis.context.growth_tokens)} tokens · attributed input ${formatTokens(diagnosis.context.attributed_tokens || 0)} tokens`));
   if (diagnosis.context.sources.length === 0) {
     console.log("none detected");
   } else {
@@ -591,7 +600,7 @@ function printCompact(diagnosis) {
   console.log(`${renderMeter(usage.context_percent, 24, color)}  ${formatContextUsage(usage)}  ${target.model || "unknown"} ${project}`);
   console.log(`usage: ${formatUsageBits(usage)}`);
   console.log(`activity: ${formatActivity(diagnosis.activity, color)}`);
-  console.log(`context: delta +${formatTokens(diagnosis.context.growth_tokens)} / ${diagnosis.context.window_minutes}m, attributed ${formatTokens(diagnosis.context.attributed_tokens || 0)}${topContext ? `, top ${topContext.source} ${formatPercent(topContext.share * 100)}` : ""}`);
+  console.log(`context: delta +${formatTokens(diagnosis.context.growth_tokens)} / ${diagnosis.context.window_minutes}m${diagnosis.context.compacted ? " after compact" : ""}, attributed ${formatTokens(diagnosis.context.attributed_tokens || 0)}${topContext ? `, top ${topContext.source} ${formatPercent(topContext.share * 100)}` : ""}`);
   console.log(`repeat: ${topRepeat ? `${topRepeat.work} x${topRepeat.count}, ${formatDuration(topRepeat.duration_ms)}, ~${formatTokens(topRepeat.estimated_tokens)} tokens` : "none"}`);
   console.log(`slowest: ${slow ? `${slow.label}, ${formatDuration(slow.duration_ms)}, ${toolStatusText(slow)}` : "none"}`);
   console.log(`advice: ${diagnosis.advice[0]}`);

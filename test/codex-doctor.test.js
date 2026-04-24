@@ -342,6 +342,26 @@ test("negative tool exit codes render as tool failures instead of shell exit cod
   assert.doesNotMatch(compact, /failed\(-1\)/);
 });
 
+test("context growth restarts from the latest compaction event", () => {
+  const fixture = createFixture({
+    id: "98989898-9898-4989-8989-989898989899",
+    tokensUsed: 420000,
+    entries: [
+      sessionMeta("98989898-9898-4989-8989-989898989899", "2026-04-24T15:00:00.000Z"),
+      tokenCount("2026-04-24T15:00:00.000Z", 210000, 210000),
+      contextCompacted("2026-04-24T15:05:00.000Z"),
+      tokenCount("2026-04-24T15:05:01.000Z", 0, 210000),
+      tokenCount("2026-04-24T15:10:00.000Z", 36000, 420000),
+    ],
+  });
+
+  const full = runDoctor(fixture, ["dg"]).stdout;
+  const compact = runDoctor(fixture, ["dg", "-c"]).stdout;
+
+  assert.match(full, /last 20m · after compact · observed delta \+36k tokens/);
+  assert.match(compact, /context: delta \+36k \/ 20m after compact/);
+});
+
 test("default target falls back to newest non-doctor session when cwd has no match", () => {
   const latestId = "91919191-9191-4919-8919-919191919191";
   const olderId = "92929292-9292-4929-8929-929292929292";
@@ -561,6 +581,14 @@ function tokenCount(timestamp, inputTokens, totalTokens) {
         plan_type: "prolite",
       },
     },
+  };
+}
+
+function contextCompacted(timestamp) {
+  return {
+    type: "event_msg",
+    timestamp,
+    payload: { type: "context_compacted" },
   };
 }
 
