@@ -143,6 +143,9 @@ The test suite builds temporary Codex homes and validates:
 - Pending and completed tool activity detection.
 - Audit-script clean and issue-detection paths.
 - Forced ANSI color mode for health levels.
+- Fallback rollout discovery when `state_5.sqlite` is unavailable.
+- Compact output's one-screen summary contract.
+- CWD fallback selection, web-search context attribution, risk thresholds, and advice branches.
 
 You can also audit local sessions:
 

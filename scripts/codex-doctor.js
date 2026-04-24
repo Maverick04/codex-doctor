@@ -189,7 +189,6 @@ function parseSession(entries, target) {
     functionOutputs: new Set(),
     webEvents: [],
     messages: [],
-    compacted: false,
     latestTimestamp: null,
   };
 
@@ -245,8 +244,6 @@ function parseSession(entries, target) {
         role: payloadType === "user_message" ? "user" : "assistant",
         text: get(entry, "payload.message") || get(entry, "payload.last_agent_message") || "",
       });
-    } else if (payloadType === "context_compacted") {
-      result.compacted = true;
     }
   }
 
@@ -763,11 +760,6 @@ function formatSeverityBadge(level, color, label) {
   return `${glyphs[normalized] || glyphs.unknown} ${colorSeverity(normalized, text, color)}`;
 }
 
-function printUsageLine(usage, color) {
-  const parts = formatUsageBits(usage).split(" | ");
-  return `usage  ${parts.map((part) => color.bold(part)).join("  ")}`;
-}
-
 function formatUsageBits(usage) {
   const bits = [];
   if (usage.context_percent !== null) {
@@ -1108,25 +1100,6 @@ function trimNumber(value) {
 
 function formatPercent(value) {
   return `${Math.round(value)}%`;
-}
-
-function formatClock(value) {
-  if (!value) {
-    return "unknown";
-  }
-  const date = new Date(coerceTimeMs(value));
-  if (Number.isNaN(date.getTime())) {
-    return "unknown";
-  }
-  return date.toTimeString().slice(0, 5);
-}
-
-function formatElapsedSince(value) {
-  const start = coerceTimeMs(value);
-  if (!start) {
-    return "unknown";
-  }
-  return formatDuration(Math.max(0, Date.now() - start));
 }
 
 function formatSessionRuntime(target) {

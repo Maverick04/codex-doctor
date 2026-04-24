@@ -251,6 +251,176 @@ test("forced color mode emits ANSI colors for health levels", () => {
   assert.match(output, /\u001b\[31;1m/);
 });
 
+test("filesystem rollout fallback selects the newest session when sqlite is absent", () => {
+  const latestId = "88888888-8888-4888-8888-888888888888";
+  const olderId = "89898989-8989-4898-8989-898989898989";
+  const fixture = createRolloutOnlyFixture({
+    id: latestId,
+    rollouts: [
+      {
+        id: olderId,
+        mtime: "2026-04-24T07:00:00.000Z",
+        entries: [
+          sessionMeta(olderId, "2026-04-24T07:00:00.000Z"),
+          tokenCount("2026-04-24T07:00:00.000Z", 12000, 50000),
+        ],
+      },
+      {
+        id: latestId,
+        mtime: "2026-04-24T08:00:00.000Z",
+        entries: [
+          sessionMeta(latestId, "2026-04-24T08:00:00.000Z"),
+          tokenCount("2026-04-24T08:00:00.000Z", 18000, 90000),
+        ],
+      },
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"], { appendId: false }).stdout;
+
+  assert.match(output, /88888888\.\.\./);
+  assert.doesNotMatch(output, /89898989\.\.\./);
+});
+
+test("compact output keeps the one-screen summary contract", () => {
+  const fixture = createFixture({
+    id: "90909090-9090-4909-8909-909090909090",
+    tokensUsed: 210000,
+    entries: [
+      sessionMeta("90909090-9090-4909-8909-909090909090", "2026-04-24T09:00:00.000Z"),
+      tokenCount("2026-04-24T09:00:00.000Z", 12000, 100000),
+      tokenCount("2026-04-24T09:05:00.000Z", 22000, 210000),
+      execEnd("2026-04-24T09:06:00.000Z", "a", "sed -n '1,80p' README.md", [{ type: "read", path: "README.md" }], "x".repeat(1600), 0, 0),
+      execEnd("2026-04-24T09:07:00.000Z", "b", "sed -n '1,80p' README.md", [{ type: "read", path: "README.md" }], "x".repeat(1600), 0, 0),
+      execEnd("2026-04-24T09:08:00.000Z", "c", "npm test", [{ type: "unknown" }], "ok", 0, 31),
+    ],
+  });
+
+  const lines = runDoctor(fixture, ["dg", "-c"]).stdout.trim().split(/\r?\n/);
+
+  assert.equal(lines.length, 8);
+  assert.match(lines[0], /^Codex Doctor /);
+  assert.match(lines[1], /22k\/258\.4k tokens \(9%\).*gpt-test workspace/);
+  assert.match(lines[2], /^usage: ctx 9% \| session 210k tokens \| 5h \d+% left/);
+  assert.match(lines[3], /^activity: idle/);
+  assert.match(lines[4], /^context: delta \+10k \/ 20m, attributed /);
+  assert.match(lines[5], /^repeat: read README\.md x2, /);
+  assert.match(lines[6], /^slowest: npm test, 31s, ok/);
+  assert.match(lines[7], /^advice: /);
+});
+
+test("default target falls back to newest non-doctor session when cwd has no match", () => {
+  const latestId = "91919191-9191-4919-8919-919191919191";
+  const olderId = "92929292-9292-4929-8929-929292929292";
+  const fixture = createFixture({
+    id: latestId,
+    cwdName: "no-session-here",
+    threads: [
+      {
+        id: latestId,
+        cwdName: "latest-project",
+        updatedAt: 1760010000,
+        tokensUsed: 110000,
+        entries: [
+          sessionMeta(latestId, "2026-04-24T10:00:00.000Z"),
+          tokenCount("2026-04-24T10:00:00.000Z", 24000, 110000),
+        ],
+      },
+      {
+        id: olderId,
+        cwdName: "older-project",
+        updatedAt: 1760000000,
+        tokensUsed: 100000,
+        entries: [
+          sessionMeta(olderId, "2026-04-24T09:00:00.000Z"),
+          tokenCount("2026-04-24T09:00:00.000Z", 22000, 100000),
+        ],
+      },
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"], { appendId: false }).stdout;
+
+  assert.match(output, /91919191\.\.\./);
+  assert.match(output, /latest-project/);
+  assert.doesNotMatch(output, /92929292\.\.\./);
+});
+
+test("web search events are attributed to context growth", () => {
+  const fixture = createFixture({
+    id: "93939393-9393-4939-8939-939393939393",
+    tokensUsed: 11000,
+    entries: [
+      sessionMeta("93939393-9393-4939-8939-939393939393", "2026-04-24T11:00:00.000Z"),
+      tokenCount("2026-04-24T11:00:00.000Z", 10000, 10000),
+      webSearchEnd("2026-04-24T11:05:00.000Z", "codex doctor statusline"),
+      tokenCount("2026-04-24T11:10:00.000Z", 10100, 11000),
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"]).stdout;
+
+  assert.match(output, /web\/search/);
+  assert.match(output, /codex doctor statusline/);
+});
+
+test("risk scoring keeps context threshold boundaries stable", () => {
+  const watchFixture = createFixture({
+    id: "94949494-9494-4949-8949-949494949494",
+    tokensUsed: 217056,
+    entries: [
+      sessionMeta("94949494-9494-4949-8949-949494949494", "2026-04-24T12:00:00.000Z"),
+      tokenCount("2026-04-24T12:00:00.000Z", 217056, 217056),
+    ],
+  });
+  const warningFixture = createFixture({
+    id: "95959595-9595-4959-8959-959595959595",
+    tokensUsed: 219640,
+    entries: [
+      sessionMeta("95959595-9595-4959-8959-959595959595", "2026-04-24T12:05:00.000Z"),
+      tokenCount("2026-04-24T12:05:00.000Z", 219640, 219640),
+    ],
+  });
+
+  assert.match(runDoctor(watchFixture, ["dg", "-c"]).stdout, /Codex Doctor 🔵 \[watch\]/);
+  assert.match(runDoctor(warningFixture, ["dg", "-c"]).stdout, /Codex Doctor 🟡 \[warning\]/);
+});
+
+test("advice covers long-running tools and long shell output", () => {
+  const fixture = createFixture({
+    id: "96969696-9696-4969-8969-969696969696",
+    tokensUsed: 160000,
+    entries: [
+      sessionMeta("96969696-9696-4969-8969-969696969696", "2026-04-24T13:00:00.000Z"),
+      tokenCount("2026-04-24T13:00:00.000Z", 12000, 100000),
+      functionCall("2026-04-24T13:02:00.000Z", "long-tool", "exec_command", { cmd: "npm run integration" }),
+      execEnd("2026-04-24T13:03:00.000Z", "huge-output", "cat huge.log", [{ type: "unknown" }], "x".repeat(12000), 0, 1),
+      tokenCount("2026-04-24T13:10:00.000Z", 18000, 160000),
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"]).stdout;
+
+  assert.match(output, /Current tool has been running/);
+  assert.match(output, /Filter large shell output/);
+});
+
+test("high context advice suggests compacting after a checkpoint", () => {
+  const fixture = createFixture({
+    id: "97979797-9797-4979-8979-979797979797",
+    tokensUsed: 220000,
+    entries: [
+      sessionMeta("97979797-9797-4979-8979-979797979797", "2026-04-24T14:00:00.000Z"),
+      tokenCount("2026-04-24T14:00:00.000Z", 150000, 150000),
+      tokenCount("2026-04-24T14:10:00.000Z", 220000, 220000),
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"]).stdout;
+
+  assert.match(output, /Compact after the current verification checkpoint/);
+});
+
 function createFixture(options) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-doctor-test-"));
   const cwd = path.join(home, options.cwdName || "workspace");
@@ -282,6 +452,23 @@ function createFixture(options) {
 
   const result = childProcess.spawnSync("sqlite3", [db, sql.join("\n")], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  return { home, cwd, id: options.id };
+}
+
+function createRolloutOnlyFixture(options) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-doctor-test-"));
+  const cwd = path.join(home, options.cwdName || "workspace");
+  const sessionDir = path.join(home, "sessions", "2026", "04", "24");
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(cwd, { recursive: true });
+
+  for (const rolloutInfo of options.rollouts || []) {
+    const rollout = path.join(sessionDir, `rollout-${rolloutInfo.id}.jsonl`);
+    fs.writeFileSync(rollout, (rolloutInfo.entries || []).map((entry) => JSON.stringify(entry)).join("\n"));
+    const mtime = new Date(rolloutInfo.mtime || Date.now());
+    fs.utimesSync(rollout, mtime, mtime);
+  }
 
   return { home, cwd, id: options.id };
 }
@@ -356,6 +543,17 @@ function execEnd(timestamp, callId, command, parsedCmd, output, exitCode, second
       exit_code: exitCode,
       duration: { secs: seconds, nanos: 0 },
       aggregated_output: output,
+    },
+  };
+}
+
+function webSearchEnd(timestamp, query) {
+  return {
+    type: "event_msg",
+    timestamp,
+    payload: {
+      type: "web_search_end",
+      query,
     },
   };
 }
