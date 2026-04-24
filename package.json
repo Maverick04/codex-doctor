@@ -1,0 +1,24 @@
+{
+  "name": "codex-doctor",
+  "version": "0.1.0",
+  "description": "Diagnose why a Codex session is slow, expensive, or losing context.",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/Maverick04/codex-doctor.git"
+  },
+  "homepage": "https://github.com/Maverick04/codex-doctor#readme",
+  "bugs": {
+    "url": "https://github.com/Maverick04/codex-doctor/issues"
+  },
+  "bin": {
+    "codex-doctor": "scripts/codex-doctor.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
