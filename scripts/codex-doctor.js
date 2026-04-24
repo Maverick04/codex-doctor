@@ -57,6 +57,7 @@ function diagnose(options) {
   const usage = buildUsage(parsed, target);
   const activity = findCurrentActivity(parsed);
   const context = buildContextAttribution(parsed);
+  const keyEvents = buildKeyEvents(parsed);
   const repeated = buildRepeatedWork(parsed);
   const completedExecs = parsed.execEnds.filter((exec) => !exec.is_doctor);
   const slowTools = completedExecs
@@ -73,6 +74,7 @@ function diagnose(options) {
     usage,
     activity,
     context,
+    keyEvents,
     repeated,
     slowTools,
     advice,
@@ -201,6 +203,7 @@ function parseSession(entries, target) {
     webEvents: [],
     messages: [],
     compactEvents: [],
+    importantEvents: [],
     latestTimestamp: null,
   };
 
@@ -258,6 +261,24 @@ function parseSession(entries, target) {
       });
     } else if (payloadType === "context_compacted") {
       result.compactEvents.push({ timestamp: entry.timestamp });
+    } else if (payloadType === "turn_aborted" || payloadType === "thread_rolled_back" || payloadType === "error") {
+      result.importantEvents.push({
+        timestamp: entry.timestamp,
+        type: payloadType,
+        detail: summarizeImportantPayload(payloadType, entry.payload || {}),
+      });
+    } else if (payloadType === "patch_apply_end" && get(entry, "payload.success") === false) {
+      result.importantEvents.push({
+        timestamp: entry.timestamp,
+        type: payloadType,
+        detail: summarizeImportantPayload(payloadType, entry.payload || {}),
+      });
+    } else if (/^collab_/.test(String(payloadType || "")) || payloadType === "mcp_tool_call_end") {
+      result.importantEvents.push({
+        timestamp: entry.timestamp,
+        type: payloadType,
+        detail: summarizeImportantPayload(payloadType, entry.payload || {}),
+      });
     }
   }
 
@@ -377,6 +398,120 @@ function buildContextAttribution(parsed) {
     .slice(0, MAX_ROWS);
 
   return { growth_tokens: growth, attributed_tokens: adjustedTotal, window_minutes: WINDOW_MINUTES, compacted, sources };
+}
+
+function buildKeyEvents(parsed) {
+  const events = [];
+
+  parsed.compactEvents.slice(-2).forEach((event) => {
+    events.push({
+      timestamp: event.timestamp,
+      type: "context compact",
+      level: "warning",
+      info: "context window reset",
+      impact: "growth is measured after this point",
+    });
+  });
+
+  events.push(...buildQuotaKeyEvents(parsed.tokenSamples));
+
+  parsed.execEnds
+    .filter((exec) => !exec.is_doctor && exec.exit_code !== 0)
+    .sort((a, b) => timestampMs(b.timestamp) - timestampMs(a.timestamp))
+    .slice(0, 2)
+    .forEach((exec) => {
+      events.push({
+        timestamp: exec.timestamp,
+        type: exec.exit_code < 0 ? "tool runner failure" : "tool failure",
+        level: exec.exit_code < 0 ? "warning" : "watch",
+        info: `${exec.label} · ${formatDuration(exec.duration_ms)} · ${toolStatusText(exec)}`,
+        impact: exec.exit_code < 0
+          ? "runner did not report a shell exit code"
+          : "command output may be incomplete or stale",
+      });
+    });
+
+  parsed.importantEvents
+    .slice()
+    .sort((a, b) => timestampMs(b.timestamp) - timestampMs(a.timestamp))
+    .slice(0, 3)
+    .forEach((event) => {
+      events.push({
+        timestamp: event.timestamp,
+        type: formatEventType(event.type),
+        level: levelForEventType(event.type),
+        info: event.detail || "-",
+        impact: impactForEventType(event.type),
+      });
+    });
+
+  return events
+    .filter((event) => event.timestamp)
+    .sort((a, b) => timestampMs(b.timestamp) - timestampMs(a.timestamp))
+    .slice(0, MAX_ROWS);
+}
+
+function buildQuotaKeyEvents(samples) {
+  const events = [];
+  const valid = samples.filter((sample) => sample.rate_limits);
+  const nowSec = Date.now() / 1000;
+  const reached = valid
+    .slice()
+    .reverse()
+    .find((sample) => get(sample, "rate_limits.rate_limit_reached_type") || get(sample, "rate_limits.primary.rate_limit_reached_type") || get(sample, "rate_limits.secondary.rate_limit_reached_type"));
+  if (reached) {
+    events.push({
+      timestamp: reached.timestamp,
+      type: "rate limit reached",
+      level: "critical",
+      info: formatQuotaInfo(reached, nowSec),
+      impact: "new requests may fail or wait until reset",
+    });
+  }
+
+  const highPrimary = valid
+    .slice()
+    .reverse()
+    .find((sample) => Number(get(sample, "rate_limits.primary.used_percent")) >= 80);
+  if (highPrimary) {
+    events.push({
+      timestamp: highPrimary.timestamp,
+      type: "5h quota high",
+      level: Number(get(highPrimary, "rate_limits.primary.used_percent")) >= 95 ? "critical" : "warning",
+      info: formatQuotaInfo(highPrimary, nowSec),
+      impact: "short-window capacity is tight",
+    });
+  }
+
+  const highSecondary = valid
+    .slice()
+    .reverse()
+    .find((sample) => Number(get(sample, "rate_limits.secondary.used_percent")) >= 80);
+  if (highSecondary) {
+    events.push({
+      timestamp: highSecondary.timestamp,
+      type: "weekly quota high",
+      level: Number(get(highSecondary, "rate_limits.secondary.used_percent")) >= 95 ? "critical" : "warning",
+      info: formatQuotaInfo(highSecondary, nowSec),
+      impact: "weekly capacity is tight",
+    });
+  }
+
+  for (let index = 1; index < valid.length; index += 1) {
+    const prev = Number(get(valid[index - 1], "rate_limits.primary.used_percent"));
+    const next = Number(get(valid[index], "rate_limits.primary.used_percent"));
+    if (Number.isFinite(prev) && Number.isFinite(next) && prev >= 70 && next <= 30) {
+      events.push({
+        timestamp: valid[index].timestamp,
+        type: "5h quota reset",
+        level: "healthy",
+        info: `5h used ${Math.round(prev)}% -> ${Math.round(next)}%`,
+        impact: "short-window capacity recovered",
+      });
+    }
+  }
+
+  return events;
 }
 
 function buildRepeatedWork(parsed) {
@@ -541,6 +676,22 @@ function printFull(diagnosis) {
         `+${formatTokens(item.tokens)}`,
         renderShare(item.share, color),
         truncate(item.evidence || "-", 56),
+      ]),
+    ]);
+  }
+  console.log("");
+
+  console.log(color.bold("Key Events"));
+  if (diagnosis.keyEvents.length === 0) {
+    console.log("none detected");
+  } else {
+    printTable([
+      ["time", "event", "key info", "impact"],
+      ...diagnosis.keyEvents.map((event) => [
+        formatShortDateTime(event.timestamp),
+        colorSeverity(event.level || "watch", event.type, color),
+        truncate(event.info || "-", 48),
+        truncate(event.impact || "-", 58),
       ]),
     ]);
   }
@@ -810,6 +961,88 @@ function formatUsageBits(usage) {
     bits.push(`plan ${usage.plan}`);
   }
   return bits.join(" | ") || "usage unavailable";
+}
+
+function formatQuotaInfo(sample, nowSec) {
+  const primary = get(sample, "rate_limits.primary");
+  const secondary = get(sample, "rate_limits.secondary");
+  const parts = [];
+  if (primary && typeof primary.used_percent === "number") {
+    parts.push(`5h used ${Math.round(primary.used_percent)}%${primary.resets_at ? ` reset ${formatResetIn(primary.resets_at, nowSec)}` : ""}`);
+  }
+  if (secondary && typeof secondary.used_percent === "number") {
+    parts.push(`week used ${Math.round(secondary.used_percent)}%`);
+  }
+  const reached = get(sample, "rate_limits.rate_limit_reached_type") || get(primary, "rate_limit_reached_type") || get(secondary, "rate_limit_reached_type");
+  if (reached) {
+    parts.push(`limit ${reached}`);
+  }
+  const plan = get(sample, "rate_limits.plan_type");
+  if (plan) {
+    parts.push(`plan ${plan}`);
+  }
+  return parts.join(" · ") || "quota sample";
+}
+
+function summarizeImportantPayload(type, payload) {
+  if (type === "turn_aborted") {
+    return payload.reason ? `reason ${payload.reason}` : "turn interrupted";
+  }
+  if (type === "thread_rolled_back") {
+    return payload.reason ? `reason ${payload.reason}` : "thread rolled back";
+  }
+  if (type === "error") {
+    return payload.message || payload.error || payload.code || "runtime error";
+  }
+  if (type === "patch_apply_end") {
+    return payload.stderr || payload.stdout || "patch failed";
+  }
+  if (type === "mcp_tool_call_end") {
+    return payload.tool_name || payload.server_name || payload.status || "mcp tool call";
+  }
+  if (/^collab_/.test(String(type || ""))) {
+    return payload.agent_id || payload.target || payload.status || "collaboration state changed";
+  }
+  return payload.status || payload.reason || type;
+}
+
+function formatEventType(type) {
+  return String(type || "event").replace(/_/g, " ");
+}
+
+function levelForEventType(type) {
+  if (type === "error") {
+    return "critical";
+  }
+  if (type === "turn_aborted" || type === "thread_rolled_back" || type === "patch_apply_end") {
+    return "warning";
+  }
+  if (type === "mcp_tool_call_end") {
+    return "watch";
+  }
+  return "watch";
+}
+
+function impactForEventType(type) {
+  if (type === "turn_aborted") {
+    return "turn was interrupted; partial work may be stale";
+  }
+  if (type === "thread_rolled_back") {
+    return "conversation state was reverted";
+  }
+  if (type === "error") {
+    return "runtime error may have affected the turn";
+  }
+  if (type === "patch_apply_end") {
+    return "patch was not applied";
+  }
+  if (type === "mcp_tool_call_end") {
+    return "external tool result may need verification";
+  }
+  if (/^collab_/.test(String(type || ""))) {
+    return "subagent or collaboration state changed";
+  }
+  return "session state changed";
 }
 
 function normalizeFunctionCall(entry) {

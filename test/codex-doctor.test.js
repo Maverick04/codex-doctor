@@ -362,6 +362,31 @@ test("context growth restarts from the latest compaction event", () => {
   assert.match(compact, /context: delta \+36k \/ 20m after compact/);
 });
 
+test("full diagnosis surfaces key session events after context growth", () => {
+  const fixture = createFixture({
+    id: "98989898-9898-4989-8989-989898989900",
+    tokensUsed: 420000,
+    entries: [
+      sessionMeta("98989898-9898-4989-8989-989898989900", "2026-04-24T15:20:00.000Z"),
+      tokenCount("2026-04-24T15:20:00.000Z", 42000, 200000, { primaryUsed: 86, secondaryUsed: 72 }),
+      contextCompacted("2026-04-24T15:21:00.000Z"),
+      execEnd("2026-04-24T15:22:00.000Z", "a", "npm run e2e", [{ type: "unknown" }], "runner stopped", -1, 122, "failed"),
+      turnAborted("2026-04-24T15:23:00.000Z", "interrupted"),
+      tokenCount("2026-04-24T15:24:00.000Z", 52000, 420000, { primaryUsed: 87, secondaryUsed: 72 }),
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"]).stdout;
+
+  assert.match(output, /Key Events/);
+  assert.match(output, /context compact/);
+  assert.match(output, /5h quota high/);
+  assert.match(output, /tool runner failure/);
+  assert.match(output, /turn aborted/);
+  assert.match(output, /growth is measured after this point/);
+  assert.match(output, /short-window capacity is tight/);
+});
+
 test("default target falls back to newest non-doctor session when cwd has no match", () => {
   const latestId = "91919191-9191-4919-8919-919191919191";
   const olderId = "92929292-9292-4929-8929-929292929292";
@@ -564,7 +589,7 @@ function sessionMeta(id, timestamp) {
   };
 }
 
-function tokenCount(timestamp, inputTokens, totalTokens) {
+function tokenCount(timestamp, inputTokens, totalTokens, rate = {}) {
   return {
     type: "event_msg",
     timestamp,
@@ -576,9 +601,13 @@ function tokenCount(timestamp, inputTokens, totalTokens) {
         total_token_usage: { input_tokens: totalTokens, output_tokens: 1000, total_tokens: totalTokens },
       },
       rate_limits: {
-        primary: { used_percent: 12, resets_at: Math.floor(Date.now() / 1000) + 3600 },
-        secondary: { used_percent: 20 },
+        primary: {
+          used_percent: rate.primaryUsed === undefined ? 12 : rate.primaryUsed,
+          resets_at: Math.floor(Date.now() / 1000) + 3600,
+        },
+        secondary: { used_percent: rate.secondaryUsed === undefined ? 20 : rate.secondaryUsed },
         plan_type: "prolite",
+        rate_limit_reached_type: rate.reached || null,
       },
     },
   };
@@ -589,6 +618,14 @@ function contextCompacted(timestamp) {
     type: "event_msg",
     timestamp,
     payload: { type: "context_compacted" },
+  };
+}
+
+function turnAborted(timestamp, reason) {
+  return {
+    type: "event_msg",
+    timestamp,
+    payload: { type: "turn_aborted", reason },
   };
 }
 
