@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Diagnose why a Codex session is slow, expensive, or losing context.",
   "author": {
-    "name": "bytedance"
+    "name": "Maverick04"
   },
   "license": "MIT",
   "keywords": [
@@ -18,7 +18,7 @@
     "displayName": "Codex Doctor",
     "shortDescription": "Diagnose Codex session context, repeated work, and slow tools",
     "longDescription": "Codex Doctor is a session-first diagnostic plugin. Invoke `$doctor dg` or `$doctor dg -c` inside a Codex session to inspect context growth, repeated work, slow tools, usage, and quota signals.",
-    "developerName": "bytedance",
+    "developerName": "Maverick04",
     "category": "Productivity",
     "capabilities": [
       "Interactive",

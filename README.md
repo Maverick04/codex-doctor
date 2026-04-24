@@ -41,56 +41,89 @@ node scripts/codex-doctor.js dg <session-id> -c
 ## Example Output
 
 ```text
-Codex Doctor 🔵 [watch]  repeated work · tool failure
+Codex Doctor 🟡 [warning]  context rising · repeated work · tool failure
 
 Context Usage
-  ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱  123.6k/258.4k tokens (48%)  gpt-5.5 claude-trace
-  usage: ctx 48% | session 20.8M tokens | 5h 93% left reset 4h29m | week 93% left | plan prolite
-  activity: idle
-  context: delta +14.8k / 20m, attributed 14.8k, top history/context carryover 80%
-  repeat: codex debug prompt-input x2, 9s, ~5k tokens
-  slowest: brew install --cask steipete/tap/codexbar, 3m37s, failed(-1)
+  ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱  gpt-5.5 xhigh
+  186.4k/258.4k tokens (72%) · session 12.8M tokens · 5h 18% left reset 42m · week 61% left · plan pro
+  019f2a44... · checkout-service · started 04-25 09:18 · runtime 2h41m · updated 12:01 · activity 4m12s · npm test -- --watch
+
+Health Signals
+┌──────────┬────────────┬────────────────────────────────────────────────────────────┐
+│ signal   │ level      │ detail                                                     │
+├──────────┼────────────┼────────────────────────────────────────────────────────────┤
+│ context  │ 🟡 WARNING │ 186.4k/258.4k tokens (72%) · free 72k                     │
+│ quota    │ 🟡 WARNING │ 5h 18% left reset 42m · week 61% left                      │
+│ activity │ 🟡 WARNING │ 4m12s · npm test -- --watch                                │
+│ growth   │ 🔵 WATCH   │ delta +38k · attributed 41k · top file reads 46%           │
+│ repeat   │ 🔵 WATCH   │ read src/orders.ts x4, 18s, ~9.4k tokens                  │
+│ tools    │ 🔵 WATCH   │ npm test -- --watch · 4m12s · still running                │
+└──────────┴────────────┴────────────────────────────────────────────────────────────┘
+
+Context Growth
+last 20m · observed delta +38k tokens · attributed input 41k tokens
+┌───────────────────────────┬──────────────┬─────────────────────┬────────────────────────────┐
+│ source                    │ est.tokens ↓ │ share               │ evidence                   │
+├───────────────────────────┼──────────────┼─────────────────────┼────────────────────────────┤
+│ file reads                │ +18.8k       │ ▰ ▰ ▰ ▰ ▰ ▱ ▱ ▱ 46% │ src/orders.ts; src/api.ts  │
+│ long shell output         │ +12.4k       │ ▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱ 30% │ npm test -- --watch        │
+│ history/context carryover │ +7.8k        │ ▰ ▰ ▱ ▱ ▱ ▱ ▱ ▱ 19% │ prior conversation         │
+│ web/search                │ +2k          │ ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱ 5%  │ payment retry semantics    │
+└───────────────────────────┴──────────────┴─────────────────────┴────────────────────────────┘
+
+Repeated Work
+┌───────────────────────┬───────┬──────┬──────────────┬─────────────────────────────────────┐
+│ work                  │ count │ time │ est.tokens ↓ │ suggestion                          │
+├───────────────────────┼───────┼──────┼──────────────┼─────────────────────────────────────┤
+│ read src/orders.ts    │ x4    │ 18s  │ 9.4k         │ Use targeted grep or line ranges    │
+│ search createOrder    │ x3    │ 7s   │ 2.1k         │ Reuse previous search result        │
+└───────────────────────┴───────┴──────┴──────────────┴─────────────────────────────────────┘
+
+Slow Tools
+┌────────────────────────┬────────┬───────────┬────────────────────────────┐
+│ tool                   │ time ↓ │ status    │ note                       │
+├────────────────────────┼────────┼───────────┼────────────────────────────┤
+│ npm run e2e            │ 2m14s  │ failed(1) │ shell command              │
+│ npm run lint           │ 54s    │ failed(1) │ shell command              │
+│ rg "createOrder" src   │ 7s     │ ok        │ search                     │
+└────────────────────────┴────────┴───────────┴────────────────────────────┘
+
+Next Actions
+1. Current tool has been running 4m12s; verify whether it is expected before retrying.
+2. Avoid re-reading full files; use targeted grep or line ranges.
+3. Compact after the current verification checkpoint.
 ```
 
 ## Installation
 
-### Option A: Add this repository as a Codex marketplace
+### Standalone CLI
+
+This path is verified against the current repository layout.
 
 ```bash
-codex plugin marketplace add git@github.com:Maverick04/codex-doctor.git
-```
-
-Then enable the plugin if your Codex version does not auto-enable installed-by-default marketplace entries:
-
-```toml
-[plugins."codex-doctor@codex-doctor"]
-enabled = true
-```
-
-Restart Codex after adding or enabling the plugin. Existing sessions usually do not hot-reload new plugin skills.
-
-### Option B: Local marketplace install
-
-```bash
-git clone git@github.com:Maverick04/codex-doctor.git ~/learn_cc/codex-doctor
-codex plugin marketplace add ~/learn_cc/codex-doctor
-```
-
-If needed, enable it in `~/.codex/config.toml`:
-
-```toml
-[plugins."codex-doctor@codex-doctor"]
-enabled = true
-```
-
-### Option C: Run as a standalone script
-
-```bash
-git clone git@github.com:Maverick04/codex-doctor.git ~/learn_cc/codex-doctor
-cd ~/learn_cc/codex-doctor
+git clone https://github.com/Maverick04/codex-doctor.git ~/codex-doctor
+cd ~/codex-doctor
+npm test
 node scripts/codex-doctor.js dg
 node scripts/codex-doctor.js dg -c
 ```
+
+### Codex Skill / Plugin
+
+The repository includes a Codex plugin bundle:
+
+- `.codex-plugin/plugin.json`
+- `.agents/plugins/marketplace.json`
+- `skills/doctor/SKILL.md`
+
+In plugin-enabled Codex builds, install this repository with your Codex plugin manager, restart Codex, then run:
+
+```text
+$doctor dg
+$doctor dg -c
+```
+
+Note: the Codex CLI build used to verify this README does not expose a stable `plugin marketplace` command, so this README does not document one as a verified install path.
 
 ## How It Works
 
