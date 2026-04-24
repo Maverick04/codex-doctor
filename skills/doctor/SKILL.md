@@ -27,7 +27,15 @@ For compact mode:
 env CODEX_DOCTOR_COLOR=1 node <resolved-plugin-root>/scripts/codex-doctor.js dg -c
 ```
 
-Then relay the output directly. Do not add unrelated analysis.
+## Output Relay Contract
+
+After running the command, relay stdout verbatim:
+
+- Paste the command output inside a fenced `text` code block.
+- Do not summarize, translate, reorder, reformat, or convert tables into Markdown/list form.
+- Do not omit sections such as `Health Signals`, `Context Growth`, `Repeated Work`, `Slow Tools`, or `Next Actions`.
+- Do not add commentary before or after the output unless the command failed or the shell output was visibly truncated by the tool.
+- If the full output is too long for the conversation, say it was truncated and rerun `$doctor dg -c`; never silently compress the full output.
 
 ## Notes
 
