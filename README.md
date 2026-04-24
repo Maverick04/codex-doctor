@@ -18,16 +18,13 @@
 Inside Codex:
 
 ```text
+$codex-doctor:doctor dg
+$codex-doctor:doctor dg -c
 $doctor dg
 $doctor dg -c
 ```
 
-When the plugin skill is loaded with the plugin prefix:
-
-```text
-$codex-doctor:doctor dg
-$codex-doctor:doctor dg -c
-```
+Use the prefixed form first when you want to verify that Codex is invoking the plugin-provided skill rather than any other skill or shell alias named `doctor`.
 
 Direct CLI usage from this repository:
 
@@ -36,12 +33,15 @@ node scripts/codex-doctor.js dg
 node scripts/codex-doctor.js dg -c
 node scripts/codex-doctor.js dg <session-id>
 node scripts/codex-doctor.js dg <session-id> -c
+node scripts/codex-doctor.js --source
+node scripts/codex-doctor.js --version
 ```
 
 ## Example Output
 
 ```text
 Codex Doctor 🟡 [warning]  context rising · repeated work · tool failure
+source: codex-doctor@0.1.0 · plugin bundle
 
 Context Usage
   ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱  gpt-5.5 xhigh
@@ -119,9 +119,20 @@ The repository includes a Codex plugin bundle:
 In plugin-enabled Codex builds, install this repository with your Codex plugin manager, restart Codex, then run:
 
 ```text
+$codex-doctor:doctor dg
+$codex-doctor:doctor dg -c
 $doctor dg
 $doctor dg -c
 ```
+
+The first output lines should include a source check:
+
+```text
+Codex Doctor 🔵 [watch]
+source: codex-doctor@0.1.0 · plugin bundle
+```
+
+If direct CLI usage shows `source: codex-doctor@0.1.0 · local checkout`, you are running the repository script directly instead of the installed plugin bundle.
 
 Note: the Codex CLI build used to verify this README does not expose a stable `plugin marketplace` command, so this README does not document one as a verified install path.
 

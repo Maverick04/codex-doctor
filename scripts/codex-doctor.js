@@ -10,6 +10,7 @@ const STATE_DB = path.join(CODEX_HOME, "state_5.sqlite");
 const SESSIONS_DIR = path.join(CODEX_HOME, "sessions");
 const WINDOW_MINUTES = 20;
 const MAX_ROWS = 5;
+const PACKAGE_INFO = loadPackageInfo();
 
 main();
 
@@ -17,6 +18,16 @@ function main() {
   try {
     const argv = process.argv.slice(2);
     const command = argv[0] || "dg";
+
+    if (command === "--version" || command === "version") {
+      console.log(`${PACKAGE_INFO.name} ${PACKAGE_INFO.version}`);
+      return;
+    }
+
+    if (command === "--source" || command === "source") {
+      printSourceCheck();
+      return;
+    }
 
     if (command !== "dg") {
       printUsage();
@@ -493,6 +504,7 @@ function printFull(diagnosis) {
     : "";
 
   console.log(`${color.bold("Codex Doctor")} ${status}${reasonText}`);
+  console.log(color.dim(formatSourceLine()));
   console.log("");
   printContextMeter(diagnosis, color);
   console.log("");
@@ -575,6 +587,7 @@ function printCompact(diagnosis) {
   const slow = diagnosis.slowTools[0];
 
   console.log(`${color.bold("Codex Doctor")} ${status}`);
+  console.log(color.dim(formatSourceLine()));
   console.log(`${renderMeter(usage.context_percent, 24, color)}  ${formatContextUsage(usage)}  ${target.model || "unknown"} ${project}`);
   console.log(`usage: ${formatUsageBits(usage)}`);
   console.log(`activity: ${formatActivity(diagnosis.activity, color)}`);
@@ -1020,10 +1033,47 @@ function makeColor() {
   };
 }
 
+function loadPackageInfo() {
+  const fallback = { name: "codex-doctor", version: "0.0.0" };
+  const packagePath = path.resolve(__dirname, "..", "package.json");
+  try {
+    const parsed = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+    return {
+      name: parsed.name || fallback.name,
+      version: parsed.version || fallback.version,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function detectSourceKind() {
+  const scriptPath = path.resolve(__filename).replace(/\\/g, "/");
+  if (scriptPath.includes("/.codex/plugins/cache/")) {
+    return "plugin bundle";
+  }
+  if (scriptPath.includes("/node_modules/")) {
+    return "npm package";
+  }
+  return "local checkout";
+}
+
+function formatSourceLine() {
+  return `source: ${PACKAGE_INFO.name}@${PACKAGE_INFO.version} · ${detectSourceKind()}`;
+}
+
+function printSourceCheck() {
+  console.log(`${PACKAGE_INFO.name} ${PACKAGE_INFO.version}`);
+  console.log(`source: ${detectSourceKind()}`);
+  console.log("entry: scripts/codex-doctor.js");
+}
+
 function printUsage() {
   console.log("Usage:");
   console.log("  codex-doctor dg");
   console.log("  codex-doctor dg -c");
+  console.log("  codex-doctor --source");
+  console.log("  codex-doctor --version");
 }
 
 function get(value, dottedPath) {

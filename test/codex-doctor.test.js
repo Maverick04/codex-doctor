@@ -28,6 +28,7 @@ test("full diagnosis keeps core sections, sort markers, severity badges, and bou
   const output = runDoctor(fixture, ["dg"]).stdout;
 
   assert.match(output, /Context Usage/);
+  assert.match(output, /source: codex-doctor@0\.1\.0 · local checkout/);
   assert.match(output, /Health Signals/);
   assert.match(output, /Context Growth/);
   assert.match(output, /Repeated Work/);
@@ -298,15 +299,27 @@ test("compact output keeps the one-screen summary contract", () => {
 
   const lines = runDoctor(fixture, ["dg", "-c"]).stdout.trim().split(/\r?\n/);
 
-  assert.equal(lines.length, 8);
+  assert.equal(lines.length, 9);
   assert.match(lines[0], /^Codex Doctor /);
-  assert.match(lines[1], /22k\/258\.4k tokens \(9%\).*gpt-test workspace/);
-  assert.match(lines[2], /^usage: ctx 9% \| session 210k tokens \| 5h \d+% left/);
-  assert.match(lines[3], /^activity: idle/);
-  assert.match(lines[4], /^context: delta \+10k \/ 20m, attributed /);
-  assert.match(lines[5], /^repeat: read README\.md x2, /);
-  assert.match(lines[6], /^slowest: npm test, 31s, ok/);
-  assert.match(lines[7], /^advice: /);
+  assert.equal(lines[1], "source: codex-doctor@0.1.0 · local checkout");
+  assert.match(lines[2], /22k\/258\.4k tokens \(9%\).*gpt-test workspace/);
+  assert.match(lines[3], /^usage: ctx 9% \| session 210k tokens \| 5h \d+% left/);
+  assert.match(lines[4], /^activity: idle/);
+  assert.match(lines[5], /^context: delta \+10k \/ 20m, attributed /);
+  assert.match(lines[6], /^repeat: read README\.md x2, /);
+  assert.match(lines[7], /^slowest: npm test, 31s, ok/);
+  assert.match(lines[8], /^advice: /);
+});
+
+test("source self-check and version output identify the package without local paths", () => {
+  const source = childProcess.spawnSync(process.execPath, [DOCTOR, "--source"], { encoding: "utf8" });
+  const version = childProcess.spawnSync(process.execPath, [DOCTOR, "--version"], { encoding: "utf8" });
+
+  assert.equal(source.status, 0, source.stderr || source.stdout);
+  assert.equal(version.status, 0, version.stderr || version.stdout);
+  assert.match(source.stdout, /^codex-doctor 0\.1\.0\nsource: local checkout\nentry: scripts\/codex-doctor\.js\n$/);
+  assert.equal(version.stdout, "codex-doctor 0.1.0\n");
+  assert.doesNotMatch(source.stdout, /\/Users|codex-doctor-test-/);
 });
 
 test("default target falls back to newest non-doctor session when cwd has no match", () => {

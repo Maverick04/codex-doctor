@@ -1,16 +1,17 @@
 ---
 name: doctor
-description: Use only when the user explicitly invokes `$doctor`, `$doctor dg`, or `$doctor dg -c` to diagnose a Codex session.
+description: Use only when the user explicitly invokes `$codex-doctor:doctor`, `$doctor`, `$doctor dg`, or `$doctor dg -c` to diagnose a Codex session.
 ---
 
 # doctor
 
-Use this skill only for explicit `$doctor` invocations.
+Use this skill only for explicit `$codex-doctor:doctor` or `$doctor` invocations.
 
 ## Commands
 
-- `$doctor` and `$doctor dg`: run the full diagnosis.
-- `$doctor dg -c`: run the compact diagnosis.
+- `$codex-doctor:doctor`, `$codex-doctor:doctor dg`, `$doctor`, and `$doctor dg`: run the full diagnosis.
+- `$codex-doctor:doctor dg -c` and `$doctor dg -c`: run the compact diagnosis.
+- `$codex-doctor:doctor --source` and `$doctor --source`: print the plugin script source check.
 
 ## Workflow
 
@@ -25,6 +26,12 @@ For compact mode:
 
 ```bash
 env CODEX_DOCTOR_COLOR=1 node <resolved-plugin-root>/scripts/codex-doctor.js dg -c
+```
+
+For source check mode:
+
+```bash
+node <resolved-plugin-root>/scripts/codex-doctor.js --source
 ```
 
 ## Output Relay Contract
