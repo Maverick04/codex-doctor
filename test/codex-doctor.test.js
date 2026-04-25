@@ -305,7 +305,7 @@ test("compact output keeps the one-screen summary contract", () => {
   assert.match(lines[2], /22k\/258\.4k tokens \(9%\).*gpt-test workspace/);
   assert.match(lines[3], /^usage: ctx 9% \| session 210k tokens \| 5h \d+% left/);
   assert.match(lines[4], /^activity: idle/);
-  assert.match(lines[5], /^context: delta \+10k \/ 20m, attributed /);
+  assert.match(lines[5], /^context: delta \+10k \/ 20m, sample /);
   assert.match(lines[6], /^repeat: read README\.md x2, /);
   assert.match(lines[7], /^slowest: npm test, 31s, ok/);
   assert.match(lines[8], /^advice: /);
@@ -358,8 +358,8 @@ test("context growth restarts from the latest compaction event", () => {
   const full = runDoctor(fixture, ["dg"]).stdout;
   const compact = runDoctor(fixture, ["dg", "-c"]).stdout;
 
-  assert.match(full, /last 20m · after compact · observed delta \+36k tokens/);
-  assert.match(compact, /context: delta \+36k \/ 20m after compact/);
+  assert.match(full, /last 20m · after compact · sample .* -> .* · observed delta \+36k tokens/);
+  assert.match(compact, /context: delta \+36k \/ 20m after compact, sample /);
 });
 
 test("full diagnosis surfaces key session events after context growth", () => {
@@ -385,6 +385,26 @@ test("full diagnosis surfaces key session events after context growth", () => {
   assert.match(output, /turn aborted/);
   assert.match(output, /growth is measured after this point/);
   assert.match(output, /short-window capacity is tight/);
+});
+
+test("token sample gaps explain side versus main diagnosis drift", () => {
+  const fixture = createFixture({
+    id: "98989898-9898-4989-8989-989898989901",
+    tokensUsed: 420000,
+    entries: [
+      sessionMeta("98989898-9898-4989-8989-989898989901", "2026-04-24T16:00:00.000Z"),
+      tokenCount("2026-04-24T16:00:00.000Z", 120000, 200000),
+      tokenCount("2026-04-24T16:05:00.000Z", 130000, 300000),
+      tokenCount("2026-04-24T17:15:00.000Z", 131000, 420000),
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"]).stdout;
+
+  assert.match(output, /token sample gap/);
+  assert.match(output, /1h10m without token samples/);
+  assert.match(output, /diagnosis before and after this turn can differ/);
+  assert.match(output, /sample .* -> .*/);
 });
 
 test("default target falls back to newest non-doctor session when cwd has no match", () => {

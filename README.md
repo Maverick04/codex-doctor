@@ -7,7 +7,7 @@
 - Context usage meter with model, session tokens, quota, start time, runtime, and current activity.
 - Health signals for context, quota, activity, context growth, repeated work, and slow tools.
 - Context growth attribution over the recent window, grouped by history carryover, file reads, shell output, search output, conversation, and web/search.
-- Key event timeline for context compaction, quota pressure, rate-limit reach events, rollbacks, aborted turns, tool runner failures, failed patches, MCP calls, and collaboration state changes.
+- Key event timeline for context compaction, token sample gaps, quota pressure, rate-limit reach events, rollbacks, aborted turns, tool runner failures, failed patches, MCP calls, and collaboration state changes.
 - Repeated work detection for repeated file reads, searches, commands, and repeated failures.
 - Slow tool ranking by elapsed time, with failure status.
 - Session selection that avoids diagnosing the doctor side session when invoked from a `/side` session.
@@ -62,7 +62,7 @@ Health Signals
 └──────────┴────────────┴────────────────────────────────────────────────────────────┘
 
 Context Growth
-last 20m · observed delta +38k tokens · attributed input 41k tokens
+last 20m · sample 04-25 11:22 -> 04-25 11:42 · observed delta +38k tokens · attributed input 41k tokens
 ┌───────────────────────────┬──────────────┬─────────────────────┬────────────────────────────┐
 │ source                    │ est.tokens ↓ │ share               │ evidence                   │
 ├───────────────────────────┼──────────────┼─────────────────────┼────────────────────────────┤
@@ -77,6 +77,7 @@ Key Events
 │ time        │ event               │ key info                      │ impact                                    │
 ├─────────────┼─────────────────────┼───────────────────────────────┼───────────────────────────────────────────┤
 │ 04-25 11:42 │ context compact     │ context window reset          │ growth is measured after this point       │
+│ 04-25 11:41 │ token sample gap    │ 1h10m without token samples   │ diagnosis can differ after this turn       │
 │ 04-25 11:31 │ 5h quota high       │ 5h used 86% reset 42m         │ short-window capacity is tight            │
 │ 04-25 11:18 │ tool runner failure │ npm run e2e · tool failed     │ runner did not report a shell exit code   │
 └─────────────┴─────────────────────┴───────────────────────────────┴───────────────────────────────────────────┘
@@ -158,7 +159,7 @@ The script resolves a target session, parses rollout events, and computes:
 - Usage and quota from `token_count` events.
 - Current activity from pending `function_call` events that do not yet have outputs.
 - Context growth from recent input token deltas and observed message/tool output.
-- Key events from context compaction, quota pressure, rate-limit reach events, runner-level failures, aborted turns, rollbacks, failed patches, MCP calls, and collaboration state changes.
+- Key events from context compaction, token sample gaps, quota pressure, rate-limit reach events, runner-level failures, aborted turns, rollbacks, failed patches, MCP calls, and collaboration state changes.
 - Repeated work from repeated reads, searches, commands, and failed commands.
 - Slow tools from `exec_command_end` durations.
 
@@ -194,7 +195,7 @@ The test suite builds temporary Codex homes and validates:
 
 - Full output sections, bordered tables, sort markers, share bars, severity badges, and slow-tool ordering.
 - Context token edge cases, including missing positive samples and final zero samples.
-- Key event rendering for compaction, quota pressure, aborted turns, and runner-level tool failures.
+- Key event rendering for compaction, token sample gaps, quota pressure, aborted turns, and runner-level tool failures.
 - Structured message payloads, multiline thread metadata, and output hygiene checks.
 - Default session selection, including doctor side-thread parent recovery.
 - Pending and completed tool activity detection.

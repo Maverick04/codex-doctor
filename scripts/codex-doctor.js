@@ -353,6 +353,7 @@ function buildContextAttribution(parsed) {
   const startMs = Math.max(windowStartMs, lastCompactMs || 0);
   const compacted = Boolean(lastCompactMs && lastCompactMs >= windowStartMs);
   const baseline = samples.find((sample) => timestampMs(sample.timestamp) >= startMs) || samples[Math.max(0, samples.length - 2)] || last;
+  const baselineMs = timestampMs(baseline.timestamp);
   const growth = Math.max(0, last.input_tokens - baseline.input_tokens);
   const buckets = new Map();
 
@@ -397,7 +398,16 @@ function buildContextAttribution(parsed) {
     .sort((a, b) => b.tokens - a.tokens)
     .slice(0, MAX_ROWS);
 
-  return { growth_tokens: growth, attributed_tokens: adjustedTotal, window_minutes: WINDOW_MINUTES, compacted, sources };
+  return {
+    growth_tokens: growth,
+    attributed_tokens: adjustedTotal,
+    window_minutes: WINDOW_MINUTES,
+    compacted,
+    sample_start: baseline.timestamp,
+    sample_end: last.timestamp,
+    sample_span_ms: Math.max(0, endMs - baselineMs),
+    sources,
+  };
 }
 
 function buildKeyEvents(parsed) {
@@ -414,6 +424,10 @@ function buildKeyEvents(parsed) {
   });
 
   events.push(...buildQuotaKeyEvents(parsed.tokenSamples));
+  const gapEvent = buildTokenSampleGapEvent(parsed.tokenSamples);
+  if (gapEvent) {
+    events.push(gapEvent);
+  }
 
   parsed.execEnds
     .filter((exec) => !exec.is_doctor && exec.exit_code !== 0)
@@ -449,6 +463,28 @@ function buildKeyEvents(parsed) {
     .filter((event) => event.timestamp)
     .sort((a, b) => timestampMs(b.timestamp) - timestampMs(a.timestamp))
     .slice(0, MAX_ROWS);
+}
+
+function buildTokenSampleGapEvent(samples) {
+  const valid = samples
+    .filter((sample) => Number.isFinite(sample.input_tokens) && sample.timestamp)
+    .sort((a, b) => timestampMs(a.timestamp) - timestampMs(b.timestamp));
+  let latestGap = null;
+  for (let index = 1; index < valid.length; index += 1) {
+    const prevMs = timestampMs(valid[index - 1].timestamp);
+    const nextMs = timestampMs(valid[index].timestamp);
+    const gapMs = nextMs - prevMs;
+    if (gapMs > WINDOW_MINUTES * 60 * 1000) {
+      latestGap = {
+        timestamp: valid[index].timestamp,
+        type: "token sample gap",
+        level: "watch",
+        info: `${formatDuration(gapMs)} without token samples`,
+        impact: "diagnosis before and after this turn can differ",
+      };
+    }
+  }
+  return latestGap;
 }
 
 function buildQuotaKeyEvents(samples) {
@@ -665,7 +701,10 @@ function printFull(diagnosis) {
 
   console.log(color.bold("Context Growth"));
   const compactText = diagnosis.context.compacted ? " · after compact" : "";
-  console.log(color.dim(`last ${diagnosis.context.window_minutes}m${compactText} · observed delta +${formatTokens(diagnosis.context.growth_tokens)} tokens · attributed input ${formatTokens(diagnosis.context.attributed_tokens || 0)} tokens`));
+  const sampleText = diagnosis.context.sample_start && diagnosis.context.sample_end
+    ? ` · sample ${formatShortDateTime(diagnosis.context.sample_start)} -> ${formatShortDateTime(diagnosis.context.sample_end)}`
+    : "";
+  console.log(color.dim(`last ${diagnosis.context.window_minutes}m${compactText}${sampleText} · observed delta +${formatTokens(diagnosis.context.growth_tokens)} tokens · attributed input ${formatTokens(diagnosis.context.attributed_tokens || 0)} tokens`));
   if (diagnosis.context.sources.length === 0) {
     console.log("none detected");
   } else {
@@ -751,7 +790,7 @@ function printCompact(diagnosis) {
   console.log(`${renderMeter(usage.context_percent, 24, color)}  ${formatContextUsage(usage)}  ${target.model || "unknown"} ${project}`);
   console.log(`usage: ${formatUsageBits(usage)}`);
   console.log(`activity: ${formatActivity(diagnosis.activity, color)}`);
-  console.log(`context: delta +${formatTokens(diagnosis.context.growth_tokens)} / ${diagnosis.context.window_minutes}m${diagnosis.context.compacted ? " after compact" : ""}, attributed ${formatTokens(diagnosis.context.attributed_tokens || 0)}${topContext ? `, top ${topContext.source} ${formatPercent(topContext.share * 100)}` : ""}`);
+  console.log(`context: delta +${formatTokens(diagnosis.context.growth_tokens)} / ${diagnosis.context.window_minutes}m${diagnosis.context.compacted ? " after compact" : ""}, sample ${formatShortDateTime(diagnosis.context.sample_end)}, attributed ${formatTokens(diagnosis.context.attributed_tokens || 0)}${topContext ? `, top ${topContext.source} ${formatPercent(topContext.share * 100)}` : ""}`);
   console.log(`repeat: ${topRepeat ? `${topRepeat.work} x${topRepeat.count}, ${formatDuration(topRepeat.duration_ms)}, ~${formatTokens(topRepeat.estimated_tokens)} tokens` : "none"}`);
   console.log(`slowest: ${slow ? `${slow.label}, ${formatDuration(slow.duration_ms)}, ${toolStatusText(slow)}` : "none"}`);
   console.log(`advice: ${diagnosis.advice[0]}`);
