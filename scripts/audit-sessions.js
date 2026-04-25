@@ -88,9 +88,6 @@ function inspectOutput(thread, doctor, output) {
   if (/ctx 0%/.test(output) && thread.tokens_used > 1000000) {
     issues.push("missing_token_sample_fallback");
   }
-  if (/5h unknown/.test(output) && /session [1-9]/.test(output)) {
-    issues.push("missing_quota_sample");
-  }
   if (/(^|[^/A-Za-z])(?:NaN|undefined|null)([^A-Za-z]|$)/.test(output)) {
     issues.push("bad_literal");
   }

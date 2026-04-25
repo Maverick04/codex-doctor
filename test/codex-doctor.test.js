@@ -133,6 +133,104 @@ test("default target skips a multiline doctor side thread and diagnoses its pare
   assert.doesNotMatch(output, /bbbbbbbb\.\.\./);
 });
 
+test("default target prefers CODEX_THREAD_ID over same-cwd recency", () => {
+  const currentId = "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1";
+  const latestId = "d2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2";
+  const fixture = createFixture({
+    id: currentId,
+    cwdName: "shared-project",
+    threads: [
+      {
+        id: latestId,
+        cwdName: "shared-project",
+        updatedAt: 1760009000,
+        tokensUsed: 180000,
+        title: "newer unrelated task",
+        entries: [
+          sessionMeta(latestId, "2026-04-24T04:10:00.000Z"),
+          tokenCount("2026-04-24T04:10:00.000Z", 42000, 180000),
+        ],
+      },
+      {
+        id: currentId,
+        cwdName: "shared-project",
+        updatedAt: 1760001000,
+        tokensUsed: 120000,
+        title: "current window task",
+        entries: [
+          sessionMeta(currentId, "2026-04-24T04:00:00.000Z"),
+          tokenCount("2026-04-24T04:00:00.000Z", 32000, 120000),
+        ],
+      },
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"], {
+    appendId: false,
+    env: { CODEX_THREAD_ID: currentId },
+  }).stdout;
+
+  assert.match(output, /c1c1c1c1\.\.\./);
+  assert.doesNotMatch(output, /d2d2d2d2\.\.\./);
+});
+
+test("default target follows current side thread to its parent", () => {
+  const parentId = "e3e3e3e3-e3e3-4e3e-8e3e-e3e3e3e3e3e3";
+  const sideId = "f4f4f4f4-f4f4-4f4f-8f4f-f4f4f4f4f4f4";
+  const unrelatedId = "a5a5a5a5-a5a5-4a5a-8a5a-a5a5a5a5a5a5";
+  const fixture = createFixture({
+    id: parentId,
+    cwdName: "side-project",
+    threads: [
+      {
+        id: parentId,
+        cwdName: "main-project",
+        updatedAt: 1760001000,
+        tokensUsed: 140000,
+        title: "main task",
+        entries: [
+          sessionMeta(parentId, "2026-04-24T04:20:00.000Z"),
+          tokenCount("2026-04-24T04:20:00.000Z", 36000, 140000),
+        ],
+      },
+      {
+        id: unrelatedId,
+        cwdName: "side-project",
+        updatedAt: 1760009000,
+        tokensUsed: 190000,
+        title: "newer same cwd task",
+        entries: [
+          sessionMeta(unrelatedId, "2026-04-24T04:30:00.000Z"),
+          tokenCount("2026-04-24T04:30:00.000Z", 48000, 190000),
+        ],
+      },
+      {
+        id: sideId,
+        cwdName: "side-project",
+        updatedAt: 1760005000,
+        tokensUsed: 9000,
+        title: "side diagnostics",
+        firstUserMessage: "inspect without interrupting the main session",
+        entries: [
+          sessionMeta(sideId, "2026-04-24T04:25:00.000Z"),
+          tokenCount("2026-04-24T04:25:00.000Z", 3000, 9000),
+        ],
+      },
+    ],
+    edges: [{ child: sideId, parent: parentId }],
+  });
+
+  const output = runDoctor(fixture, ["dg"], {
+    appendId: false,
+    env: { CODEX_THREAD_ID: sideId },
+  }).stdout;
+
+  assert.match(output, /e3e3e3e3\.\.\./);
+  assert.match(output, /main-project/);
+  assert.doesNotMatch(output, /a5a5a5a5\.\.\./);
+  assert.doesNotMatch(output, /f4f4f4f4\.\.\./);
+});
+
 test("final zero context token sample falls back to latest positive sample", () => {
   const fixture = createFixture({
     id: "44444444-4444-4444-8444-444444444444",
@@ -303,7 +401,7 @@ test("compact output keeps the one-screen summary contract", () => {
   assert.match(lines[0], /^Codex Doctor /);
   assert.equal(lines[1], "source: codex-doctor@0.1.0 · local checkout");
   assert.match(lines[2], /22k\/258\.4k tokens \(9%\).*gpt-test workspace/);
-  assert.match(lines[3], /^usage: ctx 9% \| session 210k tokens \| 5h \d+% left/);
+  assert.equal(lines[3], "usage: ctx 9% | session 210k tokens");
   assert.match(lines[4], /^activity: idle/);
   assert.match(lines[5], /^context: delta \+10k \/ 20m, sample /);
   assert.match(lines[6], /^repeat: read README\.md x2, /);
@@ -362,6 +460,26 @@ test("context growth restarts from the latest compaction event", () => {
   assert.match(compact, /context: delta \+36k \/ 20m after compact, sample /);
 });
 
+test("context compact key event includes nearby before and after token samples", () => {
+  const fixture = createFixture({
+    id: "98989898-9898-4989-8989-989898989902",
+    tokensUsed: 420000,
+    entries: [
+      sessionMeta("98989898-9898-4989-8989-989898989902", "2026-04-24T15:10:00.000Z"),
+      tokenCount("2026-04-24T15:19:00.000Z", 220000, 220000),
+      contextCompacted("2026-04-24T15:20:00.000Z"),
+      tokenCount("2026-04-24T15:20:01.000Z", 0, 220000),
+      tokenCount("2026-04-24T15:20:30.000Z", 60000, 280000),
+    ],
+  });
+
+  const output = runDoctor(fixture, ["dg"]).stdout;
+
+  assert.match(output, /context compact/);
+  assert.match(output, /ctx sample 220k -> 60k \(-160k\)/);
+  assert.match(output, /samples -1m\/\+30s; growth is measured after this point/);
+});
+
 test("full diagnosis surfaces key session events after context growth", () => {
   const fixture = createFixture({
     id: "98989898-9898-4989-8989-989898989900",
@@ -380,11 +498,10 @@ test("full diagnosis surfaces key session events after context growth", () => {
 
   assert.match(output, /Key Events/);
   assert.match(output, /context compact/);
-  assert.match(output, /5h quota high/);
   assert.match(output, /tool runner failure/);
   assert.match(output, /turn aborted/);
   assert.match(output, /growth is measured after this point/);
-  assert.match(output, /short-window capacity is tight/);
+  assert.doesNotMatch(output, /quota|5h|weekly|short-window capacity/i);
 });
 
 test("token sample gaps explain side versus main diagnosis drift", () => {

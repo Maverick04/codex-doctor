@@ -46,6 +46,7 @@ After running the command, relay stdout verbatim:
 
 ## Notes
 
-- The script defaults to the current working directory's most recently active non-doctor Codex session.
-- If invoked from a side session, the non-doctor session selection keeps the diagnosis focused on the main session instead of the `$doctor` side session.
+- The script defaults to `CODEX_THREAD_ID` from the current Codex tool environment when available.
+- If invoked from a side session, the side thread's parent keeps the diagnosis focused on the main session instead of the `$doctor` side session.
+- If the current thread cannot be resolved, it falls back to the current working directory's most recently active non-doctor Codex session.
 - Do not auto-trigger this skill for natural-language questions unless the user explicitly includes `$doctor`.

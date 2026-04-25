@@ -37,7 +37,11 @@ function main() {
 
     const compact = argv.includes("-c") || argv.includes("--compact");
     const sessionArg = argv.find((item) => item !== "dg" && item !== "-c" && item !== "--compact");
-    const diagnosis = diagnose({ sessionArg, cwd: process.cwd() });
+    const diagnosis = diagnose({
+      sessionArg,
+      cwd: process.cwd(),
+      currentThreadId: process.env.CODEX_THREAD_ID || "",
+    });
 
     if (compact) {
       printCompact(diagnosis);
@@ -99,12 +103,31 @@ function resolveTarget(options) {
     return match;
   }
 
+  const current = resolveCurrentThreadTarget(options.currentThreadId, threads);
+  if (current) {
+    return current;
+  }
+
   const sameCwd = threads.filter((thread) => thread.cwd === options.cwd);
   const pool = sameCwd.length > 0 ? sameCwd : threads;
   const nonDoctor = pool.find((thread) => !isDoctorThread(thread));
   const selected = nonDoctor || pool[0];
   const parent = selected && isDoctorThread(selected) ? loadParentThread(selected.id, threads) : null;
   return parent || selected;
+}
+
+function resolveCurrentThreadTarget(threadId, threads) {
+  const normalized = normalizeThreadId(threadId);
+  if (!normalized) {
+    return null;
+  }
+
+  const current = threads.find((thread) => thread.id === normalized);
+  if (!current) {
+    return null;
+  }
+
+  return loadParentThread(current.id, threads) || current;
 }
 
 function loadThreads() {
@@ -295,10 +318,6 @@ function buildUsage(parsed, target) {
   const contextWindow = contextSample && contextSample.info && contextSample.info.model_context_window || last && last.info && last.info.model_context_window || 0;
   const contextInput = contextSample ? contextSample.input_tokens : null;
   const contextPercent = contextInput !== null && contextWindow ? Math.round((contextInput / contextWindow) * 100) : null;
-  const rateLimits = last && last.rate_limits || null;
-  const primaryUsed = get(rateLimits, "primary.used_percent");
-  const secondaryUsed = get(rateLimits, "secondary.used_percent");
-  const nowSec = Date.now() / 1000;
 
   return {
     context_percent: contextPercent,
@@ -309,10 +328,6 @@ function buildUsage(parsed, target) {
     output_tokens: usage.output_tokens || 0,
     reasoning_output_tokens: usage.reasoning_output_tokens || 0,
     total_tokens: usage.total_tokens || target.tokens_used || 0,
-    primary_remaining_percent: typeof primaryUsed === "number" ? Math.max(0, Math.round(100 - primaryUsed)) : null,
-    secondary_remaining_percent: typeof secondaryUsed === "number" ? Math.max(0, Math.round(100 - secondaryUsed)) : null,
-    reset_in: formatResetIn(get(rateLimits, "primary.resets_at"), nowSec),
-    plan: get(rateLimits, "plan_type") || null,
   };
 }
 
@@ -414,16 +429,20 @@ function buildKeyEvents(parsed) {
   const events = [];
 
   parsed.compactEvents.slice(-2).forEach((event) => {
+    const sampleChange = describeCompactSampleChange(event, parsed.tokenSamples);
     events.push({
       timestamp: event.timestamp,
       type: "context compact",
       level: "warning",
-      info: "context window reset",
-      impact: "growth is measured after this point",
+      info: sampleChange
+        ? `ctx sample ${formatTokens(sampleChange.before_tokens)} -> ${formatTokens(sampleChange.after_tokens)} (${formatSignedTokens(sampleChange.delta_tokens)})`
+        : "context window reset",
+      impact: sampleChange
+        ? `samples ${formatRelativeOffset(sampleChange.before_offset_ms)}/${formatRelativeOffset(sampleChange.after_offset_ms)}; growth is measured after this point`
+        : "growth is measured after this point",
     });
   });
 
-  events.push(...buildQuotaKeyEvents(parsed.tokenSamples));
   const gapEvent = buildTokenSampleGapEvent(parsed.tokenSamples);
   if (gapEvent) {
     events.push(gapEvent);
@@ -465,6 +484,38 @@ function buildKeyEvents(parsed) {
     .slice(0, MAX_ROWS);
 }
 
+function describeCompactSampleChange(event, samples) {
+  const compactMs = timestampMs(event.timestamp);
+  if (!compactMs) {
+    return null;
+  }
+
+  const maxDistanceMs = WINDOW_MINUTES * 60 * 1000;
+  const valid = samples.filter((sample) => sample.timestamp && Number.isFinite(sample.input_tokens));
+  const before = valid
+    .filter((sample) => {
+      const sampleMs = timestampMs(sample.timestamp);
+      return sampleMs < compactMs && sample.input_tokens > 0 && compactMs - sampleMs <= maxDistanceMs;
+    })
+    .pop();
+  const after = valid.find((sample) => {
+    const sampleMs = timestampMs(sample.timestamp);
+    return sampleMs > compactMs && sample.input_tokens > 0 && sampleMs - compactMs <= maxDistanceMs;
+  });
+
+  if (!before || !after) {
+    return null;
+  }
+
+  return {
+    before_tokens: before.input_tokens,
+    after_tokens: after.input_tokens,
+    delta_tokens: after.input_tokens - before.input_tokens,
+    before_offset_ms: timestampMs(before.timestamp) - compactMs,
+    after_offset_ms: timestampMs(after.timestamp) - compactMs,
+  };
+}
+
 function buildTokenSampleGapEvent(samples) {
   const valid = samples
     .filter((sample) => Number.isFinite(sample.input_tokens) && sample.timestamp)
@@ -485,69 +536,6 @@ function buildTokenSampleGapEvent(samples) {
     }
   }
   return latestGap;
-}
-
-function buildQuotaKeyEvents(samples) {
-  const events = [];
-  const valid = samples.filter((sample) => sample.rate_limits);
-  const nowSec = Date.now() / 1000;
-  const reached = valid
-    .slice()
-    .reverse()
-    .find((sample) => get(sample, "rate_limits.rate_limit_reached_type") || get(sample, "rate_limits.primary.rate_limit_reached_type") || get(sample, "rate_limits.secondary.rate_limit_reached_type"));
-  if (reached) {
-    events.push({
-      timestamp: reached.timestamp,
-      type: "rate limit reached",
-      level: "critical",
-      info: formatQuotaInfo(reached, nowSec),
-      impact: "new requests may fail or wait until reset",
-    });
-  }
-
-  const highPrimary = valid
-    .slice()
-    .reverse()
-    .find((sample) => Number(get(sample, "rate_limits.primary.used_percent")) >= 80);
-  if (highPrimary) {
-    events.push({
-      timestamp: highPrimary.timestamp,
-      type: "5h quota high",
-      level: Number(get(highPrimary, "rate_limits.primary.used_percent")) >= 95 ? "critical" : "warning",
-      info: formatQuotaInfo(highPrimary, nowSec),
-      impact: "short-window capacity is tight",
-    });
-  }
-
-  const highSecondary = valid
-    .slice()
-    .reverse()
-    .find((sample) => Number(get(sample, "rate_limits.secondary.used_percent")) >= 80);
-  if (highSecondary) {
-    events.push({
-      timestamp: highSecondary.timestamp,
-      type: "weekly quota high",
-      level: Number(get(highSecondary, "rate_limits.secondary.used_percent")) >= 95 ? "critical" : "warning",
-      info: formatQuotaInfo(highSecondary, nowSec),
-      impact: "weekly capacity is tight",
-    });
-  }
-
-  for (let index = 1; index < valid.length; index += 1) {
-    const prev = Number(get(valid[index - 1], "rate_limits.primary.used_percent"));
-    const next = Number(get(valid[index], "rate_limits.primary.used_percent"));
-    if (Number.isFinite(prev) && Number.isFinite(next) && prev >= 70 && next <= 30) {
-      events.push({
-        timestamp: valid[index].timestamp,
-        type: "5h quota reset",
-        level: "healthy",
-        info: `5h used ${Math.round(prev)}% -> ${Math.round(next)}%`,
-        impact: "short-window capacity recovered",
-      });
-    }
-  }
-
-  return events;
 }
 
 function buildRepeatedWork(parsed) {
@@ -591,7 +579,6 @@ function scoreRisk(input) {
   let score = 0;
   const reasons = [];
   const ctx = input.usage.context_percent;
-  const primary = input.usage.primary_remaining_percent;
 
   if (ctx !== null && ctx >= 85) {
     score += 3;
@@ -602,14 +589,6 @@ function scoreRisk(input) {
   } else if (ctx !== null && ctx >= 50) {
     score += 1;
     reasons.push("context watch");
-  }
-
-  if (primary !== null && primary < 10) {
-    score += 3;
-    reasons.push("quota low");
-  } else if (primary !== null && primary < 20) {
-    score += 2;
-    reasons.push("quota watch");
   }
 
   if (input.context.growth_tokens > 50000) {
@@ -667,7 +646,7 @@ function buildAdvice(input) {
   }
 
   if (advice.length === 0) {
-    advice.push("Continue; no major context, quota, or tool-loop risk detected.");
+    advice.push("Continue; no major context or tool-loop risk detected.");
   }
 
   return unique(advice).slice(0, 3);
@@ -801,18 +780,10 @@ function printContextMeter(diagnosis, color) {
   const target = diagnosis.target;
   const model = [target.model || "unknown-model", target.reasoning_effort || ""].filter(Boolean).join(" ");
   const project = target.cwd ? path.basename(target.cwd) : "unknown-cwd";
-  const quota = [
-    usage.primary_remaining_percent !== null
-      ? colorSeverity(severityForQuota(usage.primary_remaining_percent), `5h ${usage.primary_remaining_percent}% left${usage.reset_in ? ` reset ${usage.reset_in}` : ""}`, color)
-      : "5h unknown",
-    usage.secondary_remaining_percent !== null
-      ? colorSeverity(severityForQuota(usage.secondary_remaining_percent), `week ${usage.secondary_remaining_percent}% left`, color)
-      : "week unknown",
-  ].join(" · ");
 
   console.log(color.bold("Context Usage"));
   console.log(`  ${renderMeter(usage.context_percent, 32, color)}  ${model}`);
-  console.log(`  ${formatContextUsage(usage, color)} · session ${formatTokens(usage.total_tokens)} tokens · ${quota}${usage.plan ? ` · plan ${usage.plan}` : ""}`);
+  console.log(`  ${formatContextUsage(usage, color)} · session ${formatTokens(usage.total_tokens)} tokens`);
   console.log(`  ${shortId(target.id)} · ${project} · started ${formatShortDateTime(target.created_at)} · runtime ${formatSessionRuntime(target)} · updated ${formatShortDateTime(target.updated_at)} · activity ${formatActivity(diagnosis.activity, color)}`);
 }
 
@@ -829,11 +800,6 @@ function buildSignals(diagnosis) {
       name: "context",
       level: severityForContext(usage.context_percent),
       detail: `${formatContextUsage(usage)}${usage.context_percent !== null && usage.context_window ? ` · free ${formatTokens(Math.max(0, usage.context_window - usage.context_input_tokens))}` : ""}`,
-    },
-    {
-      name: "quota",
-      level: severityForQuota(usage.primary_remaining_percent),
-      detail: `5h ${usage.primary_remaining_percent !== null ? `${usage.primary_remaining_percent}% left` : "unknown"}${usage.reset_in ? ` reset ${usage.reset_in}` : ""} · week ${usage.secondary_remaining_percent !== null ? `${usage.secondary_remaining_percent}% left` : "unknown"}`,
     },
     {
       name: "activity",
@@ -929,22 +895,6 @@ function severityForContext(percent) {
   return "healthy";
 }
 
-function severityForQuota(remainingPercent) {
-  if (remainingPercent === null || remainingPercent === undefined) {
-    return "unknown";
-  }
-  if (remainingPercent < 10) {
-    return "critical";
-  }
-  if (remainingPercent < 20) {
-    return "warning";
-  }
-  if (remainingPercent < 35) {
-    return "watch";
-  }
-  return "healthy";
-}
-
 function severityForActivity(activity) {
   if (activity.state !== "running") {
     return "healthy";
@@ -990,37 +940,7 @@ function formatUsageBits(usage) {
   if (usage.total_tokens) {
     bits.push(`session ${formatTokens(usage.total_tokens)} tokens`);
   }
-  if (usage.primary_remaining_percent !== null) {
-    bits.push(`5h ${usage.primary_remaining_percent}% left${usage.reset_in ? ` reset ${usage.reset_in}` : ""}`);
-  }
-  if (usage.secondary_remaining_percent !== null) {
-    bits.push(`week ${usage.secondary_remaining_percent}% left`);
-  }
-  if (usage.plan) {
-    bits.push(`plan ${usage.plan}`);
-  }
   return bits.join(" | ") || "usage unavailable";
-}
-
-function formatQuotaInfo(sample, nowSec) {
-  const primary = get(sample, "rate_limits.primary");
-  const secondary = get(sample, "rate_limits.secondary");
-  const parts = [];
-  if (primary && typeof primary.used_percent === "number") {
-    parts.push(`5h used ${Math.round(primary.used_percent)}%${primary.resets_at ? ` reset ${formatResetIn(primary.resets_at, nowSec)}` : ""}`);
-  }
-  if (secondary && typeof secondary.used_percent === "number") {
-    parts.push(`week used ${Math.round(secondary.used_percent)}%`);
-  }
-  const reached = get(sample, "rate_limits.rate_limit_reached_type") || get(primary, "rate_limit_reached_type") || get(secondary, "rate_limit_reached_type");
-  if (reached) {
-    parts.push(`limit ${reached}`);
-  }
-  const plan = get(sample, "rate_limits.plan_type");
-  if (plan) {
-    parts.push(`plan ${plan}`);
-  }
-  return parts.join(" · ") || "quota sample";
 }
 
 function summarizeImportantPayload(type, payload) {
@@ -1123,7 +1043,6 @@ function normalizeTokenSample(entry) {
   return {
     timestamp: entry.timestamp,
     info,
-    rate_limits: get(entry, "payload.rate_limits") || null,
     input_tokens: Number.isFinite(inputTokens) ? inputTokens : null,
   };
 }
@@ -1417,14 +1336,6 @@ function formatDuration(ms) {
   return rest ? `${minutes}m${rest}s` : `${minutes}m`;
 }
 
-function formatResetIn(epochSeconds, nowSeconds) {
-  if (!epochSeconds) {
-    return null;
-  }
-  const seconds = Math.max(0, Math.round(epochSeconds - nowSeconds));
-  return formatDuration(seconds * 1000);
-}
-
 function formatTokens(value) {
   const n = Math.round(Number(value) || 0);
   if (n >= 1000000) {
@@ -1434,6 +1345,22 @@ function formatTokens(value) {
     return `${trimNumber(n / 1000)}k`;
   }
   return String(n);
+}
+
+function formatSignedTokens(value) {
+  const n = Math.round(Number(value) || 0);
+  if (n === 0) {
+    return "0";
+  }
+  return `${n > 0 ? "+" : "-"}${formatTokens(Math.abs(n))}`;
+}
+
+function formatRelativeOffset(ms) {
+  const n = Math.round(Number(ms) || 0);
+  if (n === 0) {
+    return "0s";
+  }
+  return `${n > 0 ? "+" : "-"}${formatDuration(Math.abs(n))}`;
 }
 
 function trimNumber(value) {
@@ -1503,6 +1430,10 @@ function truncate(value, limit) {
 
 function normalizeCommand(cmd) {
   return String(cmd || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeThreadId(value) {
+  return String(value || "").trim();
 }
 
 function isDoctorThread(thread) {

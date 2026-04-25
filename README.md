@@ -4,13 +4,13 @@
 
 ## Features
 
-- Context usage meter with model, session tokens, quota, start time, runtime, and current activity.
-- Health signals for context, quota, activity, context growth, repeated work, and slow tools.
+- Context usage meter with model, session tokens, start time, runtime, and current activity.
+- Health signals for context, activity, context growth, repeated work, and slow tools.
 - Context growth attribution over the recent window, grouped by history carryover, file reads, shell output, search output, conversation, and web/search.
-- Key event timeline for context compaction, token sample gaps, quota pressure, rate-limit reach events, rollbacks, aborted turns, tool runner failures, failed patches, MCP calls, and collaboration state changes.
+- Key event timeline for context compaction, token sample gaps, rollbacks, aborted turns, tool runner failures, failed patches, MCP calls, and collaboration state changes.
 - Repeated work detection for repeated file reads, searches, commands, and repeated failures.
 - Slow tool ranking by elapsed time, with failure status.
-- Session selection that avoids diagnosing the doctor side session when invoked from a `/side` session.
+- Session selection that prefers the current Codex thread, follows `/side` child threads back to their parent, and avoids diagnosing the doctor side session.
 - Compact mode for one-screen summaries.
 - Dependency-free Node.js implementation.
 
@@ -46,7 +46,7 @@ source: codex-doctor@0.1.0 · plugin bundle
 
 Context Usage
   ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱  gpt-5.5 xhigh
-  186.4k/258.4k tokens (72%) · session 12.8M tokens · 5h 18% left reset 42m · week 61% left · plan pro
+  186.4k/258.4k tokens (72%) · session 12.8M tokens
   019f2a44... · checkout-service · started 04-25 09:18 · runtime 2h41m · updated 12:01 · activity 4m12s · npm test -- --watch
 
 Health Signals
@@ -54,7 +54,6 @@ Health Signals
 │ signal   │ level      │ detail                                                     │
 ├──────────┼────────────┼────────────────────────────────────────────────────────────┤
 │ context  │ 🟡 WARNING │ 186.4k/258.4k tokens (72%) · free 72k                     │
-│ quota    │ 🟡 WARNING │ 5h 18% left reset 42m · week 61% left                      │
 │ activity │ 🟡 WARNING │ 4m12s · npm test -- --watch                                │
 │ growth   │ 🔵 WATCH   │ delta +38k · attributed 41k · top file reads 46%           │
 │ repeat   │ 🔵 WATCH   │ read src/orders.ts x4, 18s, ~9.4k tokens                  │
@@ -76,9 +75,8 @@ Key Events
 ┌─────────────┬─────────────────────┬───────────────────────────────┬───────────────────────────────────────────┐
 │ time        │ event               │ key info                      │ impact                                    │
 ├─────────────┼─────────────────────┼───────────────────────────────┼───────────────────────────────────────────┤
-│ 04-25 11:42 │ context compact     │ context window reset          │ growth is measured after this point       │
+│ 04-25 11:42 │ context compact     │ ctx sample 212.9k -> 63.2k (-149.7k) │ samples -3m21s/+19s; growth is measured after this point │
 │ 04-25 11:41 │ token sample gap    │ 1h10m without token samples   │ diagnosis can differ after this turn       │
-│ 04-25 11:31 │ 5h quota high       │ 5h used 86% reset 42m         │ short-window capacity is tight            │
 │ 04-25 11:18 │ tool runner failure │ npm run e2e · tool failed     │ runner did not report a shell exit code   │
 └─────────────┴─────────────────────┴───────────────────────────────┴───────────────────────────────────────────┘
 
@@ -156,12 +154,19 @@ Note: the Codex CLI build used to verify this README does not expose a stable `p
 
 The script resolves a target session, parses rollout events, and computes:
 
-- Usage and quota from `token_count` events.
+- With an explicit session id, it diagnoses that session.
+- Without an explicit session id, it first uses `CODEX_THREAD_ID` from the current Codex tool environment.
+- If `CODEX_THREAD_ID` points at a `/side` child thread, it diagnoses the parent thread from `thread_spawn_edges`.
+- If the current thread cannot be resolved, it falls back to the current working directory's most recently active non-doctor session, then to the newest active session.
+
+- Usage from `token_count` events.
 - Current activity from pending `function_call` events that do not yet have outputs.
 - Context growth from recent input token deltas and observed message/tool output.
-- Key events from context compaction, token sample gaps, quota pressure, rate-limit reach events, runner-level failures, aborted turns, rollbacks, failed patches, MCP calls, and collaboration state changes.
+- Key events from context compaction, nearby compact before/after token samples, token sample gaps, runner-level failures, aborted turns, rollbacks, failed patches, MCP calls, and collaboration state changes.
 - Repeated work from repeated reads, searches, commands, and failed commands.
 - Slow tools from `exec_command_end` durations.
+
+Quota and rate-limit status are intentionally omitted because local rollout samples can refer to a different model bucket or stale state. Use `/status` or the Codex usage settings page for live limits.
 
 For historical sessions with missing or incomplete token samples, it falls back carefully:
 
@@ -176,7 +181,7 @@ Severity levels:
 - 🟢 `HEALTHY`: no obvious risk.
 - 🔵 `WATCH`: useful signal, but not urgent.
 - 🟡 `WARNING`: likely worth intervention soon.
-- 🔴 `CRITICAL`: context, quota, repeat loops, or tool failures are likely impacting work.
+- 🔴 `CRITICAL`: context, repeat loops, or tool failures are likely impacting work.
 
 Default table sorting:
 
@@ -195,9 +200,9 @@ The test suite builds temporary Codex homes and validates:
 
 - Full output sections, bordered tables, sort markers, share bars, severity badges, and slow-tool ordering.
 - Context token edge cases, including missing positive samples and final zero samples.
-- Key event rendering for compaction, token sample gaps, quota pressure, aborted turns, and runner-level tool failures.
+- Key event rendering for compaction, token sample gaps, aborted turns, and runner-level tool failures.
 - Structured message payloads, multiline thread metadata, and output hygiene checks.
-- Default session selection, including doctor side-thread parent recovery.
+- Default session selection, including current-thread disambiguation and side-thread parent recovery.
 - Pending and completed tool activity detection.
 - Audit-script clean and issue-detection paths.
 - Forced ANSI color mode for health levels.
